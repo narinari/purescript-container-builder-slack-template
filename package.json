@@ -1,0 +1,22 @@
+{
+  "name": "purescript-container-builder-slack-template",
+  "version": "1.0.0",
+  "main": "index.js",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "purescript": "^0.10.7",
+    "rimraf": "^2.6.1"
+  },
+  "scripts": {
+    "build": "psc-package build",
+    "clean": "rimraf output",
+    "function:register": "gcloud beta functions deploy notifyBuildPubSub --stage-bucket operation-functions --trigger-topic cloud-builds"
+  },
+  "directories": {
+    "lib": "output"
+  },
+  "dependencies": {
+    "xhr2": "^0.1.4"
+  }
+}

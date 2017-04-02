@@ -1,0 +1,19 @@
+{
+    "name": "gcf_pubsub",
+    "set": "psc-0.10.7",
+    "source": "https://github.com/purescript/package-sets.git",
+    "depends": [
+        "debug",
+        "foldable-traversable",
+        "argonaut",
+        "affjax",
+        "aff",
+        "maybe",
+        "eff",
+        "console",
+        "nullable",
+        "maps",
+        "node-buffer",
+        "prelude"
+    ]
+}
