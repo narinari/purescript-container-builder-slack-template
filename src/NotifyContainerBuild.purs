@@ -7,19 +7,20 @@ import Control.Monad.Eff (Eff)
 import Control.Monad.Eff.Class (liftEff)
 import Control.Monad.Eff.Console (CONSOLE, log)
 import Control.Monad.Eff.Exception (EXCEPTION)
+import Control.MonadZero (guard)
 
 import Data.Argonaut (decodeJson, encodeJson, jsonParser)
 import Data.Either (Either(Left), either)
-
-import Data.Traversable (for)
 import Data.Maybe (Maybe(..), maybe)
 import Data.Nullable (toMaybe)
+import Data.String as S
+import Data.Traversable (for)
 
 import Data.HTTP.Method (Method(POST))
 
 import Data.Google.CloudFunction.Event (FunctionEvent)
 import Data.Google.CloudFunction.PubsubMessage (PubsubMessage)
-import Data.Google.ContainerBuilder.Build (Build(..), BuildStatus(..), RepoSource(..), Revision(..), Source(..), StorageSource(..))
+import Data.Google.ContainerBuilder.Build (Build(..), BuildStatus(..), RepoSource(..), Revision(..), Source(..), StorageSource(..), SourceProvenance(..))
 import Data.Slack.Message.Attachment (Attachment(..), Color(..), Field(..), PresetColor(..), defaultAttachment)
 
 import Node.Buffer as Buf
@@ -32,7 +33,7 @@ import Debug.Trace
 type FunctionEffects = (ajax :: AJAX, err :: EXCEPTION, console :: CONSOLE, buffer :: Buf.BUFFER)
 
 slackWebHookURL :: String
-slackWebHookURL = "REPLACE ME"
+slackWebHookURL = "*** REPLACE ME ***"
 
 notifyBuildPubSub :: FunctionEvent PubsubMessage -> Eff FunctionEffects Unit -> Eff FunctionEffects Unit
 notifyBuildPubSub event callback = do
@@ -50,34 +51,35 @@ notifyBuildPubSub event callback = do
   callback
 
   where
-  errorMessage err
-    = Attachment defaultAttachment
-      { fallback = "Container build result parse error!:skull:"
-      , title = "Container build result parse error!:skull:"
-      , text =  err
-      , color = Just $ Preset Danger
-      }
+  errorMessage err =
+    Attachment defaultAttachment
+    { fallback = "Container build result parse error!:skull:"
+    , title = "Container build result parse error!:skull:"
+    , text =  err
+    , color = Just $ Preset Danger
+    }
 
-  buildMessage (Build build)
-    = Attachment $ defaultAttachment
-      { fallback = message build.status
-      , title = "Container build"
-      , color = Just $ case build.status of
-          StatusUnknown -> Preset Danger
-          Queued -> CustomColor "#439FE0"
-          Working -> CustomColor "#439FE0"
-          Success -> Preset Good
-          Failure -> Preset Danger
-          InternalError -> Preset Danger
-          Timeout -> Preset Danger
-          Cancelled -> Preset Warning
-      , text = message build.status
-      , fields =
-        [ sourceField build
-        , revisionField build
-        , buildIdField build
-        ]
-      }
+  buildMessage (Build build) =
+    Attachment defaultAttachment
+    { fallback = message build.status
+    , title = "Container build"
+    , color = Just $ case build.status of
+        StatusUnknown -> Preset Danger
+        Queued -> CustomColor "#439FE0"
+        Working -> CustomColor "#439FE0"
+        Success -> Preset Good
+        Failure -> Preset Danger
+        InternalError -> Preset Danger
+        Timeout -> Preset Danger
+        Cancelled -> Preset Warning
+    , text = message build.status
+    , fields =
+      [ statusField build
+      , sourceField build
+      ]
+      <> revisionFields build
+      <> [ buildIdField build ]
+    }
 
   message status = "Container " <> case status of
     StatusUnknown -> "build unknown.:grey_question:"
@@ -89,6 +91,12 @@ notifyBuildPubSub event callback = do
     Timeout -> "build timeout.:construction:"
     Cancelled -> "build canceled.:no_bicycles:"
 
+  statusField build = Field
+    { title: "Status"
+    , value: show build.status
+    , short: true
+    }
+
   sourceField build = Field
     { title: case build.source of
         Storage _ -> "Storage"
@@ -99,24 +107,27 @@ notifyBuildPubSub event callback = do
     , short: true
     }
 
-  revisionField build = Field
-    { title: case build.source of
+  revisionFields build@{source, sourceProvenance: (SourceProvenance prov) } =
+    [ revisionField source ] <> (guard (source /= prov.resolvedSource) $> revisionField prov.resolvedSource)
+
+  revisionField source = Field
+    { title: case source of
         Storage (StorageSource storage) -> "Generation"
         Repo (RepoSource repo) -> case repo.revision of
           BranchName _ -> "Branch"
           TagName _ -> "Tag"
           CommitSha _ ->"Commit"
-    , value: case build.source of
+    , value: case source of
         Storage (StorageSource storage) -> storage.generation
         Repo (RepoSource repo) -> case repo.revision of
           BranchName name -> name
           TagName name -> name
-          CommitSha sha -> sha
+          CommitSha sha -> S.take 8 sha
     , short: true
     }
 
   buildIdField build = Field
     { title: "Build ID"
-    , value: "<" <> build.logUrl <> "|" <> build.id_ <> ">"
+    , value: build.id_ <> " <" <> build.logUrl <> "|Log>"
     , short: false
     }
