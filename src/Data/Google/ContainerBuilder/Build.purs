@@ -7,10 +7,10 @@ import Control.Alt ((<|>))
 import Data.Argonaut (class DecodeJson, foldJsonString, decodeJson)
 import Data.Argonaut.Decode.Combinators ((.??), (.?))
 import Data.Either (Either(..))
-import Data.Generic (class Generic)
 import Data.Maybe (Maybe, fromMaybe)
 import Data.StrMap as M
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.Status
 data BuildStatus
   = StatusUnknown
   | Queued
@@ -20,6 +20,17 @@ data BuildStatus
   | InternalError
   | Timeout
   | Cancelled
+
+instance showBuildStatus :: Show BuildStatus where
+  show = case _ of
+    StatusUnknown -> "Status Unknown"
+    Queued -> "Queued"
+    Working -> "Working"
+    Success -> "Success"
+    Failure -> "Failure"
+    InternalError -> "Internal　Error"
+    Timeout -> "Timeout"
+    Cancelled -> "Cancelled"
 
 instance decodeJsonBuildStatus :: DecodeJson BuildStatus where
   decodeJson = foldJsonString (Left "unexpected type") case _ of
@@ -33,13 +44,15 @@ instance decodeJsonBuildStatus :: DecodeJson BuildStatus where
     "CANCELLED" -> Right Cancelled
     _ -> Left "unknown status"
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.StorageSource
 data StorageSource = StorageSource
   { bucket :: String
   , object :: String
   , generation :: String
   }
 
-derive instance genericStorageSource :: Generic StorageSource
+derive instance eqStorageSource :: Eq StorageSource
+
 instance decodeJsonStorageSource :: DecodeJson StorageSource where
   decodeJson = decodeJson >=> \obj ->
     { bucket: _
@@ -51,13 +64,22 @@ instance decodeJsonStorageSource :: DecodeJson StorageSource where
     <*> (obj .? "generation")
     <#> StorageSource
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/RepoSource
 data RepoSource = RepoSource
   { projectId :: String
   , repoName :: String
   , revision :: Revision
   }
 
-derive instance genericRepoSource :: Generic RepoSource
+derive instance eqRepoSource :: Eq RepoSource
+
+data Revision
+  = BranchName String
+  | TagName String
+  | CommitSha String
+
+derive instance eqRevision :: Eq Revision
+
 instance decodeJsonRepoSource :: DecodeJson RepoSource where
   decodeJson = decodeJson >=> \obj ->
     { projectId: _
@@ -66,25 +88,23 @@ instance decodeJsonRepoSource :: DecodeJson RepoSource where
     }
     <$> (obj .? "projectId")
     <*> (obj .? "repoName")
-    <*> ((BranchName <$> obj .? "branchName") <|> (TagName <$> obj .? "tagName") <|> (CommitSha <$> obj .? "commitSha"))
+    <*> (BranchName <$> obj .? "branchName" <|>
+         TagName <$> obj .? "tagName" <|>
+         CommitSha <$> obj .? "commitSha")
     <#> RepoSource
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.Source
 data Source
   = Storage StorageSource
   | Repo RepoSource
 
-derive instance genericSource :: Generic Source
+derive instance eqSource :: Eq Source
+
 instance decodeJsonSource :: DecodeJson Source where
   decodeJson = decodeJson >=> \obj ->
     (Storage <$> obj .? "storageSource") <|> (Repo <$> obj .? "repoSource")
 
-data Revision
-  = BranchName String
-  | TagName String
-  | CommitSha String
-
-derive instance genericRevision :: Generic Revision
-
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.BuildStep
 data BuildStep = BuildStep
   { name :: String
   , env :: Array String
@@ -95,7 +115,6 @@ data BuildStep = BuildStep
   , entrypoint :: Maybe String
   }
 
-derive instance genericBuildStep :: Generic BuildStep
 instance decodeJsonBuildStep :: DecodeJson BuildStep where
   decodeJson = decodeJson >=> \obj ->
     { name: _
@@ -115,12 +134,12 @@ instance decodeJsonBuildStep :: DecodeJson BuildStep where
     <*> (obj .?? "entrypoint")
     <#> BuildStep
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.Results
 data Results = Results
   { images :: Array BuildImage
   , buildStepImages :: Array String
   }
 
-derive instance genericResults :: Generic Results
 instance decodeJsonResults :: DecodeJson Results where
   decodeJson = decodeJson >=> \obj ->
     { images: _
@@ -130,12 +149,12 @@ instance decodeJsonResults :: DecodeJson Results where
     <*> (obj .? "buildStepImages")
     <#> Results
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.BuiltImage
 data BuildImage = BuildImage
   { name :: String
   , digest :: String
   }
 
-derive instance genericBuildImage :: Generic BuildImage
 instance decodeJsonBuildImage :: DecodeJson BuildImage where
   decodeJson = decodeJson >=> \obj ->
     { name: _
@@ -145,9 +164,26 @@ instance decodeJsonBuildImage :: DecodeJson BuildImage where
     <*> (obj .? "digest")
     <#> BuildImage
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.SourceProvenance
+data SourceProvenance = SourceProvenance
+  { resolvedSource :: Source
+  , fileHashes :: M.StrMap FileHashes
+  }
+
+instance decodeJsonSourceProvenance :: DecodeJson SourceProvenance where
+  decodeJson = decodeJson >=> \obj ->
+    { resolvedSource: _
+    , fileHashes: _
+    }
+    <$> (Storage <$> obj .? "resolvedStorageSource" <|>
+         Repo <$> obj .? "resolvedRepoSource"
+        )
+    <*> (obj .?? "fileHashes" <#> fromMaybe M.empty)
+    <#> SourceProvenance
+
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/FileHashes
 data FileHashes = FileHashes { fileHash :: Array Hash }
 
-derive instance genericFileHashes :: Generic FileHashes
 instance decodeJsonFileHashes :: DecodeJson FileHashes where
   decodeJson = decodeJson >=> \obj ->
     { fileHash: _
@@ -155,29 +191,12 @@ instance decodeJsonFileHashes :: DecodeJson FileHashes where
     <$> (obj .? "fileHash")
     <#> FileHashes
 
-data SourceProvenance = SourceProvenance
-  { resolvedStorageSource :: Maybe StorageSource
-  , resolvedRepoSource :: Maybe RepoSource
-  , fileHashes :: M.StrMap FileHashes
-  }
-
-instance decodeJsonSourceProvenance :: DecodeJson SourceProvenance where
-  decodeJson = decodeJson >=> \obj ->
-    { resolvedStorageSource: _
-    , resolvedRepoSource: _
-    , fileHashes: _
-    }
-    <$> (obj .?? "resolvedStorageSource")
-    <*> (obj .?? "resolvedRepoSource")
-    <*> (obj .?? "fileHashes" <#> fromMaybe M.empty)
-    <#> SourceProvenance
-
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/FileHashes#Hash
 data Hash = Hash
   { type :: HashType
   , value :: String
   }
 
-derive instance genericHash :: Generic Hash
 instance decodeJsonHash :: DecodeJson Hash where
   decodeJson = decodeJson >=> \obj ->
     { type: _
@@ -187,23 +206,23 @@ instance decodeJsonHash :: DecodeJson Hash where
     <*> (obj .? "value")
     <#> Hash
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.HashType
 data HashType
   = None
   | SHA256
 
-derive instance genericHashType :: Generic HashType
 instance decodeJsonHashType :: DecodeJson HashType where
   decodeJson = foldJsonString (Left "unexpected type") case _ of
     "NONE" -> Right None
     "SHA256" -> Right SHA256
     _ -> Left "unknown status"
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.BuildOptions
 data BuildOptions = BuildOptions
   { sourceProvenanceHash :: HashType
   , requestedVerifyOption :: VerifyOption
   }
 
-derive instance genericBuildOptions :: Generic BuildOptions
 instance decodeJsonBuildOptions :: DecodeJson BuildOptions where
   decodeJson = decodeJson >=> \obj ->
     { sourceProvenanceHash: _
@@ -213,17 +232,18 @@ instance decodeJsonBuildOptions :: DecodeJson BuildOptions where
     <*> (obj .? "requestedVerifyOption")
     <#> BuildOptions
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build.VerifyOption
 data VerifyOption
   = NotVerified
   | Verified
 
-derive instance genericVerifyOption :: Generic VerifyOption
 instance decodeJsonVerifyOption :: DecodeJson VerifyOption where
   decodeJson = foldJsonString (Left "unexpected type") case _ of
     "NOT_VERIFIED" -> Right NotVerified
     "VERIFIED" -> Right Verified
     _ -> Left "unknown status"
 
+-- | https://cloud.google.com/container-builder/docs/api/reference/rest/v1/projects.builds#Build
 data Build = Build
   { id_ :: String
   , projectId :: String
